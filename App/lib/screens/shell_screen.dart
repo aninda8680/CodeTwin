@@ -49,6 +49,7 @@ class _SwipeableShellContainerState extends State<SwipeableShellContainer> {
   Widget build(BuildContext context) {
     return PageView(
       controller: _pageController,
+      physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
       onPageChanged: (index) {
         // Keeps router correctly synced with the physical swipe movement
         widget.navigationShell.goBranch(

@@ -32,67 +32,58 @@ class LevelPicker extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              // Ensure it doesn't overflow! Account for 1px borders (total 2px).
-              final maxAvailableWidth = constraints.maxWidth - 2.0; 
-              double calcWidth = (maxAvailableWidth / totalLevels).floorToDouble();
-              if (calcWidth > 56.0) calcWidth = 56.0; 
-              final double tabWidth = calcWidth;
-
-              return Container(
-                height: tabHeight,
-                width: (tabWidth * totalLevels) + 2.0, // Account for exact 2px border!
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C21),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-                ),
-                child: Stack(
-                  children: [
-                    AnimatedPositioned(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.fastOutSlowIn,
-                      left: (currentLevel - 1) * tabWidth,
-                      top: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: tabWidth,
-                        decoration: BoxDecoration(
-                          color: bgColor,
-                          borderRadius: BorderRadius.circular(22),
-                        ),
+          Container(
+            height: tabHeight,
+            constraints: const BoxConstraints(maxWidth: 280), // Caps total width gracefully
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C21),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+            ),
+            child: Stack(
+              children: [
+                // Absolute bulletproof sliding pill using native alignment factors
+                AnimatedAlign(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.fastOutSlowIn,
+                  alignment: Alignment(-1.0 + (currentLevel - 1) * 0.5, 0.0), // -1 to +1 range for 5 items (step is 0.5)
+                  child: FractionallySizedBox(
+                    widthFactor: 1.0 / totalLevels,
+                    heightFactor: 1.0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: bgColor,
+                        borderRadius: BorderRadius.circular(22),
                       ),
                     ),
-                    Row(
-                      children: List.generate(totalLevels, (i) {
-                        final level = i + 1;
-                        final isSelected = currentLevel == level;
-                        return GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () => onChanged(level),
-                          child: SizedBox(
-                            width: tabWidth,
-                            height: tabHeight,
-                            child: Center(
-                              child: AnimatedDefaultTextStyle(
-                                duration: const Duration(milliseconds: 200),
-                                style: TextStyle(
-                                  fontSize: isSelected ? 16 : 15,
-                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                  color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.5),
-                                ),
-                                child: Text('$level'),
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
-                    ),
-                  ],
+                  ),
                 ),
-              );
-            }
+                // Expanded touch areas guarantee it perfectly fills the container to the atomic level
+                Row(
+                  children: List.generate(totalLevels, (i) {
+                    final level = i + 1;
+                    final isSelected = currentLevel == level;
+                    return Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => onChanged(level),
+                        child: Center(
+                          child: AnimatedDefaultTextStyle(
+                            duration: const Duration(milliseconds: 200),
+                            style: TextStyle(
+                              fontSize: isSelected ? 16 : 15,
+                              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                              color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.5),
+                            ),
+                            child: Text('$level'),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           // Fix text overlap using custom layoutbuilder and fast transition
