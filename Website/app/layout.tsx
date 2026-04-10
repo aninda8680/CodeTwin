@@ -1,8 +1,7 @@
 import type { Metadata } from 'next'
-import { GeistSans } from 'geist/font/sans'
-import { GeistMono } from 'geist/font/mono'
 import NavBar from '@/components/NavBar'
 import Footer from '@/components/Footer'
+import BackToTop from '@/components/BackToTop'
 import './globals.css'
 import { SmoothScroll } from '@/components/SmoothScroll'
 
@@ -32,13 +31,20 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      className="antialiased"
     >
-      <body className="bg-background text-text-primary font-sans antialiased">
+      <head>
+        <style dangerouslySetInnerHTML={{ __html: `
+          @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+          * { font-family: 'JetBrains Mono', monospace !important; }
+        ` }} />
+      </head>
+      <body className="bg-background text-text-primary antialiased">
         <SmoothScroll>
           <NavBar />
           <main>{children}</main>
           <Footer />
+          <BackToTop />
         </SmoothScroll>
       </body>
     </html>
