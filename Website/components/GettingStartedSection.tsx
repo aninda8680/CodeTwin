@@ -1,6 +1,7 @@
 'use client'
 
 import { motion, useScroll, useVelocity, useSpring, useTransform } from 'framer-motion'
+import Image from 'next/image'
 import { Download, Settings, Play, Check } from 'lucide-react'
 import InstallStrip from './InstallStrip'
 
@@ -177,9 +178,11 @@ export default function GettingStartedSection() {
                     className="flex items-center gap-3 group"
                   >
                     <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-border-default group-hover:border-[#a6a6ed] transition-colors">
-                      <img 
+                      <Image 
                         src={person.avatar_url} 
                         alt={`${person.login}'s avatar`}
+                        width={36}
+                        height={36}
                         className="w-full h-full object-cover transition-transform group-hover:scale-105"
                       />
                     </div>
