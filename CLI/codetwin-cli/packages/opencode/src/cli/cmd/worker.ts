@@ -332,10 +332,14 @@ export const WorkerCommand = cmd({
 
       const ws = new WebSocket(fullUrl, { headers })
 
+      let pingTimer: any
       const closeCode = await new Promise<number>((resolveClose) => {
         ws.addEventListener("open", () => {
           delay = reconnectDelay
           console.log("Connected to broker as worker.")
+          pingTimer = setInterval(() => {
+            safeSend(ws, { type: "ping", workerId })
+          }, 20000)
         })
 
         ws.addEventListener("error", (event) => {
@@ -368,6 +372,7 @@ export const WorkerCommand = cmd({
         })
 
         ws.addEventListener("close", (event) => {
+          clearInterval(pingTimer)
           resolveClose(event.code)
         })
       })
