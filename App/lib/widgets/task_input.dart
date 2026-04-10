@@ -53,10 +53,9 @@ class _TaskInputState extends State<TaskInput> {
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOutCubic,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: const Color(0xFF16161A), // Deep sleek background
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(28), // Sweeping uniform radius
         border: Border.all(
           color: isFocused
               ? primaryColor.withValues(alpha: 0.5)
@@ -72,60 +71,67 @@ class _TaskInputState extends State<TaskInput> {
             ),
         ],
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              enabled: widget.enabled,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 15,
-                height: 1.4,
-              ),
-              decoration: InputDecoration(
-                hintText: 'Ask CodeTwin to do something...',
-                hintStyle: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.3),
+      // The ClipRRect totally intercepts any child from bleeding over the outer grey border outline
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                enabled: widget.enabled,
+                style: const TextStyle(
+                  color: Colors.white,
                   fontSize: 15,
+                  height: 1.4,
                 ),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.fromLTRB(20, 16, 8, 16),
-                isDense: true,
-              ),
-              maxLines: 4,
-              minLines: 1,
-              textInputAction: TextInputAction.none, // Allow multiline typing
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 8, bottom: 8),
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.0, end: _hasText ? 1.0 : 0.0),
-              duration: const Duration(milliseconds: 200),
-              builder: (context, val, child) {
-                return Opacity(
-                  opacity: val,
-                  child: Transform.scale(
-                    scale: 0.8 + (0.2 * val),
-                    child: IconButton(
-                      onPressed: widget.enabled && _hasText ? _submit : null,
-                      style: IconButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                        shape: const CircleBorder(),
-                        padding: const EdgeInsets.all(10),
-                      ),
-                      icon: const Icon(Icons.arrow_upward, size: 20),
-                    ),
+                decoration: InputDecoration(
+                  hintText: 'Ask CodeTwin to do something...',
+                  hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.3),
+                    fontSize: 15,
                   ),
-                );
-              },
+                  border: InputBorder.none,
+                  // Balance the internal text explicitly so it rests equally spaced
+                  contentPadding: const EdgeInsets.fromLTRB(24, 16, 8, 16),
+                  isDense: true,
+                ),
+                maxLines: 4,
+                minLines: 1,
+                textInputAction: TextInputAction.newline,
+              ),
             ),
-          ),
-        ],
+            // The button area
+            Padding(
+              // Centered visually
+              padding: const EdgeInsets.only(right: 8),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0.0, end: _hasText ? 1.0 : 0.0),
+                duration: const Duration(milliseconds: 200),
+                builder: (context, val, child) {
+                  return Opacity(
+                    opacity: val,
+                    child: Transform.scale(
+                      scale: 0.8 + (0.2 * val),
+                      child: IconButton(
+                        onPressed: widget.enabled && _hasText ? _submit : null,
+                        style: IconButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: const CircleBorder(),
+                          padding: const EdgeInsets.all(8), // Make inner icon slightly tighter
+                        ),
+                        icon: const Icon(Icons.arrow_upward, size: 20),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
