@@ -344,12 +344,6 @@ class _BottomBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (canInput) ...[
-            if (session.status == SessionStatus.failed)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6, left: 2),
-                child: Text(' (last task failed — try again)',
-                    style: cli.mono.copyWith(color: cli.amber, fontSize: 10)),
-              ),
             TaskInput(
               enabled: true,
               onSubmit: (task) => actions.submitTask(task),

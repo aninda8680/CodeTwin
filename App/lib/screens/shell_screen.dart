@@ -108,7 +108,7 @@ class ShellScreen extends ConsumerWidget {
                         ),
 
                       Positioned(
-                        top: 14,
+                        top: 4,
                         right: 16,
                         child: Transform.scale(
                           scale: 0.75,
