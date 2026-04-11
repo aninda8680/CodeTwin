@@ -104,15 +104,23 @@ class ShellScreen extends ConsumerWidget {
                           top: 4,
                           left: 16,
                           right: 64,
-                          child: _FloatingStatusBar(session: session),
+                          height: 32,
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: _FloatingStatusBar(session: session),
+                          ),
                         ),
 
                       Positioned(
                         top: 4,
                         right: 16,
-                        child: Transform.scale(
-                          scale: 0.75,
-                          child: const DaemonStatusBar(),
+                        height: 32,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Transform.scale(
+                            scale: 0.75,
+                            child: const DaemonStatusBar(),
+                          ),
                         ),
                       ),
                     ],
@@ -189,9 +197,6 @@ class _FloatingStatusBar extends ConsumerWidget {
         // Status Badge
         SessionStatusBadge(status: session.status, currentTask: session.currentTask),
         const Spacer(),
-        if (isRunning) ...[
-          _BlinkingCursor(color: cli.accent),
-        ],
       ],
     );
   }
