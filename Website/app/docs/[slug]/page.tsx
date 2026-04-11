@@ -48,8 +48,11 @@ type Block =
 async function parseAndRenderBlocks(md: string): Promise<Block[]> {
   const blocks: Block[] = []
   
+  // Normalize line endings to avoid \r breaking the regex match
+  const cleanMd = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  
   // Split by code blocks: ```lang \n code \n ```
-  const parts = md.split(/``` *(\w+)? *\n([\s\S]*?)```/g)
+  const parts = cleanMd.split(/``` *(\w+)? *\n([\s\S]*?)```/g)
   
   for (let i = 0; i < parts.length; i += 3) {
     if (parts[i]) {
@@ -86,18 +89,20 @@ function escapeHtml(unsafe: string) {
 function renderMarkdown(md: string): string {
   let html = md.replace(/\r\n/g, '\n')
 
+  // Compile links first to prevent regex collisions with Tailwind bracket classes like `text-[14px]`
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-[#a6a6ed] font-medium hover:text-[#c4c4ff] hover:underline underline-offset-4 pointer-events-auto transition-colors">$1</a>')
+
   html = html
-    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-text-primary font-bold bg-[#a6a6ed]/10 px-1.5 py-0.5 rounded">$1</strong>')
-    .replace(/`([^`\n]+)`/g, (m, codeText) => `<code class="font-mono text-[13px] bg-[#eb5757]/10 border border-[#eb5757]/20 rounded px-1.5 py-0.5 text-[#eb5757] font-medium break-all sm:break-normal">${escapeHtml(codeText)}</code>`)
-    .replace(/^### (.+)$/gm, (m, title) => `<h3 id="${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}" class="text-lg font-semibold text-text-primary mt-12 mb-4 flex items-center gap-2 tracking-tight"><div class="w-1.5 h-5 bg-[#a6a6ed] rounded-full"></div>${title}</h3>`)
-    .replace(/^## (.+)$/gm, (m, title) => `<h2 id="${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}" class="text-xl md:text-2xl font-bold text-text-primary mt-16 mb-6 border-b border-border-default pb-4 tracking-tight">${title}</h2>`)
-    .replace(/^# (.+)$/gm, (m, title) => `<h1 class="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-text-primary to-text-secondary mb-8 tracking-tighter">${title}</h1>`)
-    .replace(/^- (.+)$/gm, '<li class="text-text-secondary text-[15px] ml-6 list-disc mb-2 pl-2 marker:text-[#a6a6ed]">$1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li class="text-text-secondary text-[15px] ml-6 list-decimal mb-2 pl-2 marker:text-[#a6a6ed] font-medium">$1</li>')
-    .replace(/^> (.+)$/gm, '<blockquote class="border-l-2 border-[#a6a6ed] pl-4 py-1 italic text-text-muted my-6 bg-[#a6a6ed]/5 rounded-r">$1</blockquote>')
-    .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" class="text-[#a6a6ed] hover:underline underline-offset-4 pointer-events-auto">$1</a>')
-    .replace(/^(?!<(?:h|li|blockquote)).+$/gm, (line) =>
-      line.trim() ? `<p class="text-[15px] md:text-base text-text-secondary leading-relaxed mb-6">${line.trim()}</p>` : ''
+    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-text-primary font-bold bg-[#a6a6ed]/10 px-1 rounded">$1</strong>')
+    .replace(/`([^`\n]+)`/g, (m, codeText) => `<code class="font-mono text-xs md:text-[13px] bg-surface-elevated border border-border-default rounded px-1.5 py-0.5 text-[#ff7b72] font-semibold tracking-tight shadow-sm break-words">${escapeHtml(codeText)}</code>`)
+    .replace(/^### (.+)$/gm, (m, title) => `<h3 id="${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}" class="text-base md:text-lg font-bold text-text-primary mt-10 mb-4 flex items-center gap-3 tracking-tight"><div class="w-1.5 h-5 bg-gradient-to-b from-[#a6a6ed] to-[#7373ed] rounded-full shadow-[0_0_8px_rgba(166,166,237,0.4)]"></div>${title}</h3>`)
+    .replace(/^## (.+)$/gm, (m, title) => `<h2 id="${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}" class="text-xl md:text-2xl font-bold text-text-primary mt-12 mb-5 pb-2 tracking-tight group"><span class="border-b-2 border-border-default group-hover:border-[#a6a6ed] transition-colors pb-1.5">${title}</span></h2>`)
+    .replace(/^# (.+)$/gm, (m, title) => `<h1 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-text-primary via-text-primary to-[#a6a6ed] mb-10 tracking-tight leading-tight drop-shadow-sm">${title}</h1>`)
+    .replace(/^- (.+)$/gm, '<li class="text-text-secondary text-[14px] md:text-[15px] ml-6 list-disc mb-2 pl-1 marker:text-[#a6a6ed] font-medium">$1</li>')
+    .replace(/^\d+\. (.+)$/gm, '<li class="text-text-secondary text-[14px] md:text-[15px] ml-6 list-decimal mb-2 pl-1 marker:text-[#a6a6ed] font-bold text-text-primary">$1</li>')
+    .replace(/^> (.+)$/gm, '<blockquote class="border-l-4 border-[#a6a6ed] pl-4 py-2 text-base italic text-text-primary font-medium my-6 bg-gradient-to-r from-[#a6a6ed]/10 to-transparent rounded-r-lg">$1</blockquote>')
+    .replace(/^(?!<(?:h|li|blockquote|a)).+$/gm, (line) =>
+      line.trim() ? `<p class="text-[14px] md:text-[15px] text-text-secondary leading-relaxed mb-5 font-medium">${line.trim()}</p>` : ''
     )
 
   return html
@@ -137,28 +142,36 @@ export default async function DocsPage({ params }: DocsPageProps) {
           )
         } else {
           return (
-            <div key={index} className="my-8 rounded-xl overflow-hidden border border-border-default bg-[#0d1117] shadow-xl group">
-              <div className="flex items-center justify-between px-4 py-2.5 bg-surface-elevated/50 border-b border-border-default">
-                <div className="flex items-center gap-3">
-                  <div className="flex gap-1.5 opacity-60">
-                    <div className="w-2.5 h-2.5 rounded-full bg-border-default hover:bg-[#ff5f56] transition-colors cursor-pointer" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-border-default hover:bg-[#ffbd2e] transition-colors cursor-pointer" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-border-default hover:bg-[#27c93f] transition-colors cursor-pointer" />
+            <div key={index} className="my-8 rounded-[14px] overflow-hidden border border-white/10 bg-[#0A0D15] shadow-2xl group relative ring-1 ring-black/20">
+              {/* Subtle top edge highlight for 3D glass effect */}
+              <div className="absolute inset-x-0 top-0 h-[1px] bg-white/5 z-10" />
+              
+              <div className="flex items-center justify-between px-4 py-3 bg-[#ffffff03] border-b border-white/5 relative z-20">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex gap-1.5 opacity-90">
+                    <div className="w-[11px] h-[11px] rounded-full bg-[#FF5F56] border border-[#DF3F36]" />
+                    <div className="w-[11px] h-[11px] rounded-full bg-[#FFBD2E] border border-[#DE9B24]" />
+                    <div className="w-[11px] h-[11px] rounded-full bg-[#27C93F] border border-[#1BAA2B]" />
                   </div>
-                  <span className="text-[11px] font-mono font-semibold text-text-muted uppercase tracking-widest pl-2 border-l border-border-default">{block.lang}</span>
+                  <span className="text-[11px] font-mono font-medium text-text-muted/60 uppercase tracking-widest pl-3 ml-1 border-l border-white/10">{block.lang}</span>
                 </div>
-                <CopyButton text={block.code} label={`Copy ${block.lang} code`} />
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                  <CopyButton text={block.code} label={`Copy ${block.lang} code`} />
+                </div>
               </div>
               <div 
-                className="p-5 overflow-x-auto text-[13px] sm:text-sm font-mono leading-relaxed"
+                className="p-5 overflow-x-auto text-[13px] sm:text-[14px] font-mono leading-loose tracking-wide !bg-transparent relative z-20 selection:bg-[#a6a6ed]/30"
                 dangerouslySetInnerHTML={{ __html: block.html.replace(/<pre[^>]*>/, '<pre class="bg-transparent m-0 p-0">') }}
               />
+              
+              {/* Subtle ambient light from bottom right on hover */}
+              <div className="absolute -bottom-[200px] -right-[200px] w-[400px] h-[400px] bg-[#a6a6ed]/5 blur-[100px] rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-1000 pointer-events-none" />
             </div>
           )
         }
       })}
 
-      <div className="mt-16 pt-8 border-t border-border-default flex flex-col sm:flex-row items-stretch justify-between gap-4">
+      <div className="mt-24 pt-10 border-t border-border-default flex flex-col sm:flex-row items-stretch justify-between gap-6">
         {prevPage ? (
           <Link href={`/docs/${prevPage.slug}`} className="group flex flex-col items-start p-4 bg-surface hover:bg-surface-elevated border border-border-default hover:border-[#a6a6ed] rounded-xl transition-all w-full sm:w-1/2">
             <span className="text-xs text-text-muted font-mono tracking-[0.2em] uppercase mb-1.5 flex items-center gap-2 group-hover:-translate-x-1 transition-transform">
