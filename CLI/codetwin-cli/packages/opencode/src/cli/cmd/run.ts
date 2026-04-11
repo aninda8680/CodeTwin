@@ -622,6 +622,11 @@ export const RunCommand = cmd({
               return
             }
 
+            if (decision.type === "USER_ANSWER" && normalizePermissionReply(decision.answer) === "reject") {
+              resolve({ type: "reject" })
+              return
+            }
+
             const answers = parseQuestionAnswers({
               answer: decision.type === "USER_ANSWER" ? decision.answer : undefined,
               questionCount: input.questionCount,
@@ -825,18 +830,6 @@ export const RunCommand = cmd({
             const request = event.properties
             if (request.sessionID !== sessionID) continue
 
-            if (skip) {
-              await sdk.question.reject({
-                requestID: request.id,
-              })
-              emit("approval_resolved", {
-                requestID: request.id,
-                reply: "reject",
-                kind: "question",
-              })
-              continue
-            }
-
             const first = request.questions[0]
             const question = toQuestionPrompt({
               header: first?.header,
@@ -846,6 +839,28 @@ export const RunCommand = cmd({
               first?.options
                 ?.map((item) => (typeof item.label === "string" ? item.label.trim() : ""))
                 .filter(Boolean) ?? []
+            if (!options.some((item) => normalizePermissionReply(item) === "reject")) {
+              options.push("Reject")
+            }
+
+            if (skip) {
+              const answers = parseQuestionAnswers({
+                answer: options[0] ?? "Use your best judgment and continue.",
+                questionCount: request.questions.length,
+                fallback: options[0],
+              })
+
+              await sdk.question.reply({
+                requestID: request.id,
+                answers,
+              })
+              emit("approval_resolved", {
+                requestID: request.id,
+                reply: "auto",
+                kind: "question",
+              })
+              continue
+            }
             const timeoutMs = 300000
 
             if (
