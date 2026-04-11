@@ -13,8 +13,6 @@ import 'screens/logs_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/onboarding_screen.dart';
-import 'screens/modals/preflight_modal.dart';
-import 'screens/modals/decision_modal.dart';
 
 // Keys are static — created once, never recreated. This prevents the
 // "Duplicate GlobalKey" crash that occurs when routerProvider rebuilds
@@ -101,17 +99,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/modals/preflight',
-        parentNavigatorKey: _rootNavigatorKey,
-        builder: (_, state) => PreflightModal(
-          awaitingResponseId: state.uri.queryParameters['id'] ?? '',
-        ),
+        redirect: (_, __) => '/dashboard',
       ),
       GoRoute(
         path: '/modals/decision',
-        parentNavigatorKey: _rootNavigatorKey,
-        builder: (_, state) => DecisionModal(
-          awaitingResponseId: state.uri.queryParameters['id'] ?? '',
-        ),
+        redirect: (_, __) => '/dashboard',
       ),
     ],
   );

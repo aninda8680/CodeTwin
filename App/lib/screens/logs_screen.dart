@@ -10,7 +10,10 @@ import '../widgets/process_timeline_list.dart';
 enum _LogsViewMode { timeline, raw }
 
 class LogsScreen extends ConsumerStatefulWidget {
-  const LogsScreen({super.key});
+  // Kept for hot-reload compatibility when older app state still references it.
+  final bool forceTimeline;
+
+  const LogsScreen({super.key, this.forceTimeline = false});
 
   @override
   ConsumerState<LogsScreen> createState() => _LogsScreenState();

@@ -2,11 +2,25 @@ import 'package:flutter/material.dart';
 import '../models/log_entry.dart';
 import '../models/session_status.dart';
 import '../theme/cli_theme.dart';
+import '../widgets/decision_card.dart';
 
 class ChatMessageList extends StatefulWidget {
   final List<LogEntry> logs;
-  
-  const ChatMessageList({super.key, required this.logs});
+  final DecisionItem? pendingDecision;
+  final void Function(String awaitingResponseId, String answer)? onDecisionAnswer;
+  final void Function(String awaitingResponseId)? onDecisionReject;
+  final bool showTimelineLink;
+  final VoidCallback? onViewTimeline;
+
+  const ChatMessageList({
+    super.key,
+    required this.logs,
+    this.pendingDecision,
+    this.onDecisionAnswer,
+    this.onDecisionReject,
+    this.showTimelineLink = false,
+    this.onViewTimeline,
+  });
 
   @override
   State<ChatMessageList> createState() => _ChatMessageListState();
@@ -24,7 +38,13 @@ class _ChatMessageListState extends State<ChatMessageList> {
   @override
   void didUpdateWidget(ChatMessageList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.logs.length > oldWidget.logs.length) {
+    final hadDecision = oldWidget.pendingDecision != null;
+    final hasDecision = widget.pendingDecision != null;
+    final hadTimelineLink = oldWidget.showTimelineLink;
+    final hasTimelineLink = widget.showTimelineLink;
+    if (widget.logs.length > oldWidget.logs.length ||
+        (!hadDecision && hasDecision) ||
+        (!hadTimelineLink && hasTimelineLink)) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
   }
@@ -47,12 +67,92 @@ class _ChatMessageListState extends State<ChatMessageList> {
 
   @override
   Widget build(BuildContext context) {
+    final showDecision =
+        widget.pendingDecision != null &&
+        widget.onDecisionAnswer != null &&
+        widget.onDecisionReject != null;
+    final showTimelineLink = widget.showTimelineLink && widget.onViewTimeline != null;
+    final totalCount =
+      widget.logs.length + (showDecision ? 1 : 0) + (showTimelineLink ? 1 : 0);
+
     return ListView.separated(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: widget.logs.length,
+      itemCount: totalCount,
       separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
+        if (showDecision && index == widget.logs.length) {
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.9,
+              ),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                builder: (context, value, child) {
+                  return Opacity(
+                    opacity: value,
+                    child: Transform.translate(
+                      offset: Offset(0, (1 - value) * 16),
+                      child: child,
+                    ),
+                  );
+                },
+                child: DecisionCard(
+                  item: widget.pendingDecision!,
+                  inChat: true,
+                  onAnswer: widget.onDecisionAnswer!,
+                  onReject: widget.onDecisionReject!,
+                ),
+              ),
+            ),
+          );
+        }
+
+        final timelineIndex = widget.logs.length + (showDecision ? 1 : 0);
+        if (showTimelineLink && index == timelineIndex) {
+          final cli = CliTheme.of(context);
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: widget.onViewTimeline,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: cli.box(
+                    borderColor: cli.border,
+                    bgColor: cli.surface,
+                    radius: 12,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.chevron_right, size: 16, color: cli.accent),
+                      const SizedBox(width: 6),
+                      Text(
+                        'View process timeline',
+                        style: cli.mono.copyWith(
+                          color: cli.accent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+
         final entry = widget.logs[index];
         final isUser = entry.message.startsWith('> Task:') || entry.message.startsWith('> Answer:');
 
