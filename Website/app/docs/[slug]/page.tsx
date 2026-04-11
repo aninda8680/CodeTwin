@@ -65,7 +65,7 @@ async function parseAndRenderBlocks(md: string): Promise<Block[]> {
       let html = ''
       try {
         html = await codeToHtml(code, { lang, theme: 'github-dark' })
-      } catch (e) {
+      } catch {
         html = await codeToHtml(code, { lang: 'text', theme: 'github-dark' })
       }
       
@@ -99,7 +99,7 @@ function renderMarkdown(md: string): string {
     .replace(/^## (.+)$/gm, (m, title) => `<h2 id="${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}" class="text-xl md:text-2xl font-bold text-text-primary mt-12 mb-5 pb-2 tracking-tight group"><span class="border-b-2 border-border-default group-hover:border-[#a6a6ed] transition-colors pb-1.5">${title}</span></h2>`)
     .replace(/^# (.+)$/gm, (m, title) => `<h1 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-text-primary via-text-primary to-[#a6a6ed] mb-10 tracking-tight leading-tight drop-shadow-sm">${title}</h1>`)
     .replace(/^- (.+)$/gm, '<li class="text-text-secondary text-[14px] md:text-[15px] ml-6 list-disc mb-2 pl-1 marker:text-[#a6a6ed] font-medium">$1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li class="text-text-secondary text-[14px] md:text-[15px] ml-6 list-decimal mb-2 pl-1 marker:text-[#a6a6ed] font-bold text-text-primary">$1</li>')
+    .replace(/^\d+\. (.+)$/gm, '<li class="text-text-secondary text-[14px] md:text-[15px] ml-6 list-decimal mb-2 pl-1 marker:text-[#a6a6ed] font-bold">$1</li>')
     .replace(/^> (.+)$/gm, '<blockquote class="border-l-4 border-[#a6a6ed] pl-4 py-2 text-base italic text-text-primary font-medium my-6 bg-gradient-to-r from-[#a6a6ed]/10 to-transparent rounded-r-lg">$1</blockquote>')
     .replace(/^(?!<(?:h|li|blockquote|a)).+$/gm, (line) =>
       line.trim() ? `<p class="text-[14px] md:text-[15px] text-text-secondary leading-relaxed mb-5 font-medium">${line.trim()}</p>` : ''
