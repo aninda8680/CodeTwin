@@ -3,7 +3,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 
-type Level = "stdout" | "stderr" | "meta"
+type Level = "stdout" | "stderr" | "meta" | "cli_event"
 type JobStatus = "running" | "done" | "error"
 type JobMode = "shell" | "cli"
 type PairRole = "client" | "worker"
@@ -26,12 +26,14 @@ type AuthContext =
 type JobLog = {
   ts: number
   level: Level
-  text: string
+  text?: string
+  event?: Record<string, unknown>
 }
 
 type Job = {
   id: string
   mode: JobMode
+  interactive?: boolean
   command: string
   args: string[]
   cwd: string
@@ -46,8 +48,19 @@ type Job = {
 
 type BridgeEvent =
   | { type: "ready"; ts: number; jobId: string | null }
-  | { type: "start"; jobId: string; ts: number; mode: JobMode; command: string; args: string[]; cwd: string; pid: number }
+  | {
+      type: "start"
+      jobId: string
+      ts: number
+      mode: JobMode
+      interactive?: boolean
+      command: string
+      args: string[]
+      cwd: string
+      pid: number
+    }
   | { type: "stdout" | "stderr"; jobId: string; ts: number; text: string }
+  | { type: "cli_event"; jobId: string; ts: number; event: Record<string, unknown> }
   | { type: "input"; jobId: string; ts: number; bytes: number }
   | { type: "terminate"; jobId: string; ts: number; signal: string }
   | { type: "exit"; jobId: string; ts: number; code: number }
@@ -101,6 +114,7 @@ const adminToken = (process.env["REMOTE_EXEC_TOKEN"] ?? "").trim()
 const signingSecret =
   (process.env["REMOTE_EXEC_SIGNING_SECRET"] ?? process.env["REMOTE_EXEC_PAIRING_SECRET"] ?? "").trim()
 const maxLogs = parseNumber(process.env["REMOTE_EXEC_MAX_LOGS"], 4000)
+const wsClientPingMs = parseNumber(process.env["REMOTE_EXEC_WS_CLIENT_PING_MS"], 15000)
 
 const publicApiBaseUrl = (process.env["REMOTE_EXEC_PUBLIC_BASE_URL"] ?? "").trim()
 const publicWsUrl = (process.env["REMOTE_EXEC_PUBLIC_WS_URL"] ?? "").trim()
@@ -125,6 +139,115 @@ const workers = new Map<string, ServerWebSocket<WsData>>()
 
 const pairingSessions = new Map<string, PairingSession>()
 const pairingCodes = new Map<string, string>()
+const clientHeartbeatTimers = new Map<ServerWebSocket<WsData>, ReturnType<typeof setInterval>>()
+
+const mobileFeatureCatalog = {
+  transport: {
+    websocket: {
+      path: "/ws",
+      supports: ["subscribe", "execute", "cliExecute", "input", "terminate", "ping", "pong"],
+    },
+    sse: {
+      paths: ["/stream", "/jobs/:id/stream"],
+      pingIntervalMs: wsClientPingMs,
+    },
+  },
+  execution: {
+    shell: {
+      endpoint: "POST /jobs",
+      interactive: false,
+    },
+    cliStructured: {
+      endpoint: "POST /cli/exec",
+      interactive: false,
+      request: {
+        args: ["run", "<prompt>"],
+        streamFormat: "json",
+        thinking: true,
+      },
+      emits: ["cli_event", "stdout", "stderr", "exit", "error"],
+    },
+    cliInteractive: {
+      endpoint: "POST /cli/exec",
+      interactive: true,
+      request: {
+        args: ["<optional cli args>"],
+        interactive: true,
+      },
+      notes: [
+        "Keeps stdin open for raw key control (slash, tab, arrows, escape sequences)",
+        "Use /jobs/:id/input with appendNewline=false for single-key and terminal control sequences",
+      ],
+    },
+  },
+  tuiCommands: {
+    global: [
+      { id: "session.list", slash: ["/sessions", "/resume", "/continue"] },
+      { id: "session.new", slash: ["/new", "/clear"] },
+      { id: "model.list", slash: ["/models"] },
+      { id: "model.cycle_recent", keybind: "model_cycle_recent" },
+      { id: "model.cycle_recent_reverse", keybind: "model_cycle_recent_reverse" },
+      { id: "model.cycle_favorite", keybind: "model_cycle_favorite" },
+      { id: "model.cycle_favorite_reverse", keybind: "model_cycle_favorite_reverse" },
+      { id: "agent.list", slash: ["/agents"] },
+      { id: "agent.cycle", keybind: "agent_cycle" },
+      { id: "agent.cycle.reverse", keybind: "agent_cycle_reverse" },
+      { id: "variant.cycle", keybind: "variant_cycle" },
+      { id: "variant.list", slash: ["/variants"] },
+      { id: "mcp.list", slash: ["/mcps"] },
+      { id: "provider.connect", slash: ["/connect"] },
+      { id: "codetwin.status", slash: ["/status"] },
+      { id: "theme.switch", slash: ["/themes"] },
+      { id: "help.show", slash: ["/help"] },
+      { id: "app.exit", slash: ["/exit", "/quit", "/q"] },
+    ],
+    prompt: [
+      { id: "prompt.submit", keybind: "input_submit" },
+      { id: "prompt.clear", keybind: "input_clear" },
+      { id: "prompt.editor", slash: ["/editor"] },
+      { id: "prompt.skills", slash: ["/skills"] },
+      { id: "prompt.stash" },
+      { id: "prompt.stash.pop" },
+      { id: "prompt.stash.list" },
+      { id: "session.interrupt", keybind: "session_interrupt" },
+      { id: "prompt.paste", keybind: "input_paste" },
+    ],
+    session: [
+      { id: "session.share", slash: ["/share"] },
+      { id: "session.rename", slash: ["/rename"] },
+      { id: "session.timeline", slash: ["/timeline"] },
+      { id: "session.fork", slash: ["/fork"] },
+      { id: "session.compact", slash: ["/compact", "/summarize"] },
+      { id: "session.unshare", slash: ["/unshare"] },
+      { id: "session.undo", slash: ["/undo"] },
+      { id: "session.redo", slash: ["/redo"] },
+      { id: "session.toggle.timestamps", slash: ["/timestamps", "/toggle-timestamps"] },
+      { id: "session.toggle.thinking", slash: ["/thinking", "/toggle-thinking"] },
+      { id: "messages.copy" },
+      { id: "session.copy", slash: ["/copy"] },
+      { id: "session.export", slash: ["/export"] },
+      { id: "session.child.first", keybind: "session_child_first" },
+      { id: "session.parent", keybind: "session_parent" },
+      { id: "session.child.next", keybind: "session_child_cycle" },
+      { id: "session.child.previous", keybind: "session_child_cycle_reverse" },
+    ],
+  },
+  defaultKeybinds: {
+    command_list: "ctrl+p",
+    leader: "ctrl+x",
+    agent_cycle: "tab",
+    agent_cycle_reverse: "shift+tab",
+    variant_cycle: "ctrl+t",
+    model_list: "<leader>m",
+    agent_list: "<leader>a",
+    session_list: "<leader>l",
+    session_new: "<leader>n",
+    session_timeline: "<leader>g",
+    input_submit: "return",
+    input_newline: "shift+return,ctrl+return,alt+return,ctrl+j",
+    session_interrupt: "escape",
+  },
+}
 
 const now = () => Date.now()
 const WS_OPEN = 1
@@ -326,6 +449,7 @@ function jobInfo(job: Job) {
   return {
     id: job.id,
     mode: job.mode,
+    interactive: !!job.interactive,
     command: job.command,
     args: job.args,
     cwd: job.cwd,
@@ -348,6 +472,19 @@ function appendLog(jobId: string, level: Level, text: string) {
   }
 }
 
+function appendCliEvent(jobId: string, event: Record<string, unknown>, ts?: number) {
+  const job = jobs.get(jobId)
+  if (!job) return
+  job.logs.push({
+    ts: typeof ts === "number" ? ts : now(),
+    level: "cli_event",
+    event,
+  })
+  if (job.logs.length > maxLogs) {
+    job.logs.splice(0, job.logs.length - maxLogs)
+  }
+}
+
 function jobIdFromEvent(event: BridgeEvent) {
   if (!("jobId" in event)) return undefined
   return typeof event.jobId === "string" ? event.jobId : undefined
@@ -361,17 +498,38 @@ function matchesClientFilters(event: BridgeEvent, jobFilter?: string, pairingId?
   return Boolean(job && job.pairingId === pairingId)
 }
 
-function fanoutToClients(event: BridgeEvent) {
+function fanoutToClients(event: BridgeEvent, pairingId?: string) {
   for (const client of sseClients) {
+    if (pairingId && client.pairingId !== pairingId) continue
     if (!matchesClientFilters(event, client.jobId, client.pairingId)) continue
     client.send(event)
   }
 
   const data = JSON.stringify(event)
   for (const client of clientWs) {
+    if (pairingId && client.data.pairingId !== pairingId) continue
     if (!matchesClientFilters(event, client.data.jobId, client.data.pairingId)) continue
     client.send(data)
   }
+}
+
+function stopClientHeartbeat(socket: ServerWebSocket<WsData>) {
+  const timer = clientHeartbeatTimers.get(socket)
+  if (!timer) return
+  clearInterval(timer)
+  clientHeartbeatTimers.delete(socket)
+}
+
+function startClientHeartbeat(socket: ServerWebSocket<WsData>) {
+  stopClientHeartbeat(socket)
+  const timer = setInterval(() => {
+    if (socket.readyState !== WS_OPEN) {
+      stopClientHeartbeat(socket)
+      return
+    }
+    socket.send(JSON.stringify({ type: "ping", ts: now() }))
+  }, wsClientPingMs)
+  clientHeartbeatTimers.set(socket, timer)
 }
 
 function sendToWorker(workerId: string, payload: unknown) {
@@ -446,8 +604,16 @@ function stringArray(input: unknown) {
   return input.filter((item): item is string => typeof item === "string")
 }
 
+function normalizeCliStreamFormat(input: unknown): "text" | "json" | undefined {
+  if (typeof input !== "string") return undefined
+  const value = input.toLowerCase()
+  if (value === "text" || value === "json") return value
+  return undefined
+}
+
 function createPendingJob(input: {
   mode: JobMode
+  interactive?: boolean
   command?: string
   args?: string[]
   cwd?: string
@@ -457,6 +623,7 @@ function createPendingJob(input: {
   const job: Job = {
     id: jobId,
     mode: input.mode,
+    interactive: input.interactive,
     command: input.command ?? "",
     args: input.args ?? [],
     cwd: input.cwd ?? "",
@@ -477,6 +644,9 @@ function dispatchJob(input: {
   args?: string[]
   cwd?: string
   env?: unknown
+  interactive?: unknown
+  streamFormat?: unknown
+  thinking?: unknown
   pairingId?: string
 }) {
   const workerId = pickWorkerId(input.pairingId)
@@ -489,16 +659,30 @@ function dispatchJob(input: {
   const command = input.command ?? ""
   const cwd = input.cwd
   const env = normalizeEnv(input.env)
+  const cliInteractive = mode === "cli" ? input.interactive === true : undefined
+  const cliStreamFormat =
+    mode === "cli"
+      ? (normalizeCliStreamFormat(input.streamFormat) ?? (cliInteractive ? "text" : args[0] === "run" ? "json" : "text"))
+      : undefined
+  const cliThinking =
+    mode === "cli"
+      ? typeof input.thinking === "boolean"
+        ? input.thinking
+        : cliInteractive
+          ? false
+          : cliStreamFormat === "json"
+      : undefined
 
   if (mode === "shell" && !command.trim()) {
     throw new Error("command is required")
   }
-  if (mode === "cli" && args.length === 0) {
+  if (mode === "cli" && args.length === 0 && !cliInteractive) {
     throw new Error("args must be a non-empty string array")
   }
 
   const job = createPendingJob({
     mode,
+    interactive: cliInteractive,
     command: mode === "shell" ? command : ["codetwin", ...args].join(" "),
     args,
     cwd,
@@ -514,6 +698,9 @@ function dispatchJob(input: {
     args,
     cwd,
     env,
+    interactive: cliInteractive,
+    streamFormat: cliStreamFormat,
+    thinking: cliThinking,
   })
 
   if (!sent) {
@@ -574,13 +761,24 @@ function disconnectWorker(workerId: string) {
 
 function replayHistory(job: Job, send: (event: BridgeEvent) => void) {
   for (const line of job.logs) {
+    if (line.level === "cli_event" && line.event) {
+      send({
+        type: "cli_event",
+        jobId: job.id,
+        ts: line.ts,
+        event: line.event,
+      })
+      continue
+    }
+
+    if (!line.text) continue
     const type = line.level === "stderr" ? "stderr" : "stdout"
-    fanoutToClients({
+    send({
       type,
       jobId: job.id,
       ts: line.ts,
       text: line.text,
-    }, job.pairingId)
+    })
   }
 
   if (job.status !== "running" && job.code !== null) {
@@ -623,6 +821,7 @@ function handleWorkerEvent(socket: ServerWebSocket<WsData>, body: any) {
     job = {
       id: jobId,
       mode: body.mode,
+      interactive: body.interactive === true,
       command: body.command || "",
       args: body.args || [],
       cwd: body.cwd || "",
@@ -652,6 +851,7 @@ function handleWorkerEvent(socket: ServerWebSocket<WsData>, body: any) {
   if (job) {
     if (type === "start") {
       job.mode = body.mode === "cli" ? "cli" : "shell"
+      job.interactive = body.interactive === true
       job.command = typeof body.command === "string" ? body.command : job.command
       job.args = stringArray(body.args)
       job.cwd = typeof body.cwd === "string" ? body.cwd : job.cwd
@@ -660,7 +860,12 @@ function handleWorkerEvent(socket: ServerWebSocket<WsData>, body: any) {
       job.start = typeof body.ts === "number" ? body.ts : job.start
       job.pid = typeof body.pid === "number" ? body.pid : job.pid
     } else if (type === "stdout" || type === "stderr") {
-      appendLog(jobId, type, body.text)
+      const text = typeof body.text === "string" ? body.text : ""
+      appendLog(jobId, type, text)
+    } else if (type === "cli_event") {
+      if (body.event && typeof body.event === "object") {
+        appendCliEvent(jobId, body.event as Record<string, unknown>, typeof body.ts === "number" ? body.ts : undefined)
+      }
     } else if (type === "exit") {
       console.log(`[Server] Job ${jobId} exited on worker ${workerId} with code ${body.code}`)
       job.code = body.code
@@ -708,7 +913,7 @@ function createSse(req: Request, pairingId?: string, jobId?: string) {
 
       ping = setInterval(() => {
         controller.enqueue(`event: ping\ndata: ${now()}\n\n`)
-      }, 15000)
+      }, wsClientPingMs)
     },
     cancel() {
       if (client) sseClients.delete(client)
@@ -858,19 +1063,6 @@ function getSessionForPoll(body: any) {
   return session
 }
 
-function fanoutToClients(payload: any, pairingId?: string) {
-  const text = JSON.stringify(payload)
-  let count = 0
-  for (const socket of clientWs) {
-    if (pairingId && socket.data.pairingId !== pairingId) continue
-    socket.send(text)
-    count++
-  }
-  if (payload.type === "stdout" || payload.type === "stderr") {
-    console.log(`[Server] Fanned out ${payload.type} for job ${payload.jobId} to ${count} clients (pairingId: ${pairingId})`)
-  }
-}
-
 function findJobForPairing(jobId: string, pairingId?: string) {
   const job = jobs.get(jobId)
   if (!job) return undefined
@@ -914,6 +1106,7 @@ const server = Bun.serve<WsData>({
           http: [
             "GET /health",
             "GET /features",
+            "GET /mobile/features",
             "GET /pair/config",
             "POST /pair/cli/start",
             "POST /pair/cli/poll",
@@ -927,8 +1120,25 @@ const server = Bun.serve<WsData>({
             "POST /jobs/:id/terminate",
             "GET /stream",
           ],
-          websocket: ["subscribe", "execute", "cliExecute", "input", "terminate"],
-          workerWebsocket: ["start", "stdout", "stderr", "exit", "error", "input", "terminate"],
+          websocket: ["subscribe", "execute", "cliExecute", "input", "terminate", "ping", "pong"],
+          workerWebsocket: ["start", "stdout", "stderr", "cli_event", "exit", "error", "input", "terminate"],
+          mobile: {
+            capabilitiesEndpoint: "/mobile/features",
+            interactiveCli: true,
+            structuredCliEvents: true,
+          },
+        },
+        200,
+        req,
+      )
+    }
+
+    if (url.pathname === "/mobile/features" && req.method === "GET") {
+      return asJson(
+        {
+          ok: true,
+          generatedAt: now(),
+          data: mobileFeatureCatalog,
         },
         200,
         req,
@@ -1102,6 +1312,9 @@ const server = Bun.serve<WsData>({
         const args = stringArray(body?.args)
         const cwd = typeof body?.cwd === "string" ? body.cwd : undefined
         const env = body?.env
+        const interactive = body?.interactive
+        const streamFormat = body?.streamFormat
+        const thinking = body?.thinking
 
         const { job, workerId } = dispatchJob({
           mode,
@@ -1109,6 +1322,9 @@ const server = Bun.serve<WsData>({
           args,
           cwd,
           env,
+          interactive,
+          streamFormat,
+          thinking,
           pairingId: clientPairing,
         })
 
@@ -1234,6 +1450,7 @@ const server = Bun.serve<WsData>({
         )
       } else {
         clientWs.add(socket)
+        startClientHeartbeat(socket)
         socket.send(
           JSON.stringify({
             type: "ready",
@@ -1258,17 +1475,27 @@ const server = Bun.serve<WsData>({
           disconnectWorker(workerId)
         }
       } else {
+        stopClientHeartbeat(socket)
         clientWs.delete(socket)
       }
     },
     message(socket, raw) {
+      const text = typeof raw === "string" ? raw : Buffer.from(raw).toString("utf8")
       let body: any
       try {
-        const text = typeof raw === "string" ? raw : Buffer.from(raw).toString("utf8")
         body = JSON.parse(text)
       } catch {
-        socket.send(JSON.stringify({ type: "error", ts: now(), message: "Invalid JSON payload" }))
-        return
+        const fallback = text.trim().toLowerCase()
+        if (fallback === "subscribe") {
+          body = { type: "subscribe" }
+        } else if (fallback === "ping") {
+          body = { type: "ping" }
+        } else if (fallback === "pong") {
+          body = { type: "pong" }
+        } else {
+          socket.send(JSON.stringify({ type: "error", ts: now(), message: "Invalid JSON payload" }))
+          return
+        }
       }
 
       if (socket.data.role === "worker") {
@@ -1280,12 +1507,11 @@ const server = Bun.serve<WsData>({
         const pairingId = socket.data.pairingId
 
         if (body?.type === "subscribe") {
-          const requestedJobId = typeof body?.jobId === "string" ? body.jobId : undefined
+          let requestedJobId = typeof body?.jobId === "string" ? body.jobId : undefined
           if (requestedJobId) {
             const job = findJobForPairing(requestedJobId, pairingId)
             if (!job) {
-              socket.send(JSON.stringify({ type: "error", ts: now(), message: "Job not found" }))
-              return
+              requestedJobId = undefined
             }
           }
 
@@ -1310,6 +1536,9 @@ const server = Bun.serve<WsData>({
           const args = stringArray(body?.args)
           const cwd = typeof body?.cwd === "string" ? body.cwd : undefined
           const env = body?.env
+          const interactive = body?.interactive
+          const streamFormat = body?.streamFormat
+          const thinking = body?.thinking
 
           const { job, workerId } = dispatchJob({
             mode,
@@ -1317,6 +1546,9 @@ const server = Bun.serve<WsData>({
             args,
             cwd,
             env,
+            interactive,
+            streamFormat,
+            thinking,
             pairingId,
           })
 
@@ -1388,7 +1620,11 @@ const server = Bun.serve<WsData>({
           return
         }
 
-        socket.send(JSON.stringify({ type: "error", ts: now(), message: "Unsupported message type" }))
+        if (body?.type === "pong") {
+          return
+        }
+
+        return
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         socket.send(JSON.stringify({ type: "error", ts: now(), message }))

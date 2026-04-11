@@ -5,6 +5,7 @@ import { resolve } from "path"
 import { normalizeWsUrl, readRemoteBridgeState } from "../remote-bridge"
 
 type JobMode = "shell" | "cli"
+type CliStreamFormat = "text" | "json"
 type RunningProcess = ReturnType<typeof spawn>
 
 const OPEN = 1
@@ -27,6 +28,32 @@ function normalizeEnv(input: unknown) {
 function normalizeArgs(input: unknown) {
   if (!Array.isArray(input)) return []
   return input.filter((item): item is string => typeof item === "string")
+}
+
+function normalizeCliStreamFormat(input: unknown): CliStreamFormat {
+  if (typeof input !== "string") return "text"
+  return input.toLowerCase() === "json" ? "json" : "text"
+}
+
+function hasFlag(args: string[], flag: string) {
+  return args.includes(flag)
+}
+
+function hasOption(args: string[], name: string) {
+  return args.includes(name) || args.some((item) => item.startsWith(`${name}=`))
+}
+
+function parseCliEventLine(line: string) {
+  const trimmed = line.trim()
+  if (!trimmed) return undefined
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (!parsed || typeof parsed !== "object") return undefined
+    if (typeof parsed.type !== "string") return undefined
+    return parsed as Record<string, unknown>
+  } catch {
+    return undefined
+  }
 }
 
 function sleep(ms: number) {
@@ -194,6 +221,9 @@ export const WorkerCommand = cmd({
       let proc: RunningProcess
       let displayCommand = ""
       let displayArgs: string[] = []
+      let parseCliEvents = false
+      let cliStdoutBuffer = ""
+      let keepStdinOpen = false
 
       try {
         if (mode === "shell") {
@@ -208,33 +238,77 @@ export const WorkerCommand = cmd({
           })
         } else {
           const execArgs = normalizeArgs(msg.args)
-          if (!execArgs.length) throw new Error("args must be a non-empty string array")
+          const interactive = msg.interactive === true
+          if (!execArgs.length && !interactive) throw new Error("args must be a non-empty string array")
 
-          // Standardize background execution: 
-          // 1. Bypass the .cmd wrapper which mangles quotes on Windows.
-          // 2. Use process.argv[0] (bun) and process.argv[1] (index.ts) directly.
-          // 3. Force --use-system-ca and --conditions=browser.
-          const entryPoint = process.argv[1]
-          const bunArgs = [
-            "run",
-            "--use-system-ca",
-            "--conditions=browser",
-            entryPoint,
-            ...execArgs,
-          ]
+          if (interactive) {
+            keepStdinOpen = true
+            let interactiveBin = codetwinBin
+            if (interactiveBin === "codetwin") {
+              const localWrapper = resolve(cwd, "..", "codetwin")
+              if (existsSync(localWrapper)) {
+                interactiveBin = localWrapper
+              }
+            }
 
-          displayCommand = `${process.argv[0]} ${bunArgs.join(" ")}`
-          displayArgs = bunArgs
+            displayCommand = `${interactiveBin} ${execArgs.join(" ")}`.trim()
+            displayArgs = execArgs
 
-          console.log(`[Worker] Executing job ${jobId}: ${displayCommand}`)
-          console.log(`[Worker] CWD: ${cwd}`)
+            console.log(`[Worker] Executing interactive CLI job ${jobId}: ${displayCommand}`)
+            console.log(`[Worker] CWD: ${cwd}`)
 
-          proc = spawn(process.argv[0], bunArgs, {
-            cwd,
-            env,
-            stdio: ["pipe", "pipe", "pipe"],
-            windowsHide: true,
-          })
+            proc = spawn(interactiveBin, execArgs, {
+              cwd,
+              env,
+              stdio: ["pipe", "pipe", "pipe"],
+              windowsHide: true,
+            })
+
+            // Interactive jobs stream raw terminal output and key input, not JSON event lines.
+            parseCliEvents = false
+          } else {
+            const streamFormat = normalizeCliStreamFormat(msg.streamFormat)
+            const firstArg = execArgs[0]
+            const isRunCommand = firstArg === "run"
+            if (streamFormat === "json" && isRunCommand) {
+              if (!hasOption(execArgs, "--format")) {
+                execArgs.push("--format", "json")
+              }
+
+              const includeThinking = msg.thinking !== false
+              if (includeThinking && !hasFlag(execArgs, "--thinking")) {
+                execArgs.push("--thinking")
+              }
+
+              parseCliEvents = true
+            }
+
+            // Standardize background execution:
+            // 1. Bypass the .cmd wrapper which mangles quotes on Windows.
+            // 2. Use process.argv[0] (bun) and process.argv[1] (index.ts) directly.
+            // 3. Force --use-system-ca and --conditions=browser.
+            const entryPoint = process.argv[1]
+            const bunArgs = [
+              "run",
+              "--use-system-ca",
+              "--conditions=browser",
+              entryPoint,
+              ...execArgs,
+            ]
+
+            displayCommand = `${process.argv[0]} ${bunArgs.join(" ")}`
+            displayArgs = bunArgs
+
+            console.log(`[Worker] Executing job ${jobId}: ${displayCommand}`)
+            console.log(`[Worker] CWD: ${cwd}`)
+
+            proc = spawn(process.argv[0], bunArgs, {
+              cwd,
+              env,
+              stdio: ["pipe", "pipe", "pipe"],
+              windowsHide: true,
+            })
+          }
         }
       } catch (error) {
         console.error(`[Worker] Spawn error for job ${jobId}:`, error)
@@ -251,19 +325,22 @@ export const WorkerCommand = cmd({
 
       running.set(jobId, proc)
 
-      // Close stdin after a small delay to ensure the process has started
-      setTimeout(() => {
-        if (running.has(jobId)) {
-          console.log(`[Worker] Ending stdin for job ${jobId}`)
-          proc.stdin?.end()
-        }
-      }, 500)
+      if (!keepStdinOpen) {
+        // Close stdin after a small delay to ensure the process has started.
+        setTimeout(() => {
+          if (running.has(jobId)) {
+            console.log(`[Worker] Ending stdin for job ${jobId}`)
+            proc.stdin?.end()
+          }
+        }, 500)
+      }
 
       safeSend(ws, {
         type: "start",
         jobId,
         ts: Date.now(),
         mode,
+        interactive: keepStdinOpen,
         command: displayCommand,
         args: displayArgs,
         cwd,
@@ -279,6 +356,23 @@ export const WorkerCommand = cmd({
           ts: Date.now(),
           text,
         })
+
+        if (!parseCliEvents) return
+
+        cliStdoutBuffer += text
+        const lines = cliStdoutBuffer.split(/\r?\n/)
+        cliStdoutBuffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          const event = parseCliEventLine(line)
+          if (!event) continue
+          safeSend(ws, {
+            type: "cli_event",
+            jobId,
+            ts: Date.now(),
+            event,
+          })
+        }
       })
 
       proc.stderr?.on("data", (chunk: Buffer | string) => {
@@ -307,6 +401,17 @@ export const WorkerCommand = cmd({
 
       proc.on("close", (code) => {
         console.log(`[Worker] Job ${jobId} exited with code ${code}`)
+        if (parseCliEvents && cliStdoutBuffer.trim()) {
+          const event = parseCliEventLine(cliStdoutBuffer)
+          if (event) {
+            safeSend(ws, {
+              type: "cli_event",
+              jobId,
+              ts: Date.now(),
+              event,
+            })
+          }
+        }
         running.delete(jobId)
         safeSend(ws, {
           type: "exit",
@@ -361,7 +466,7 @@ export const WorkerCommand = cmd({
       const fullUrl = `${wsUrl}${wsUrl.includes("?") ? "&" : "?"}workerId=${encodeURIComponent(workerId)}`
       console.log(`Connecting to broker at ${fullUrl} as ${workerId}...`)
 
-      const ws = new WebSocket(fullUrl, { headers })
+      const ws = new WebSocket(fullUrl, { headers } as any)
 
       let pingTimer: any
       const closeCode = await new Promise<number>((resolveClose) => {
